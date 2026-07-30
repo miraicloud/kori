@@ -1,20 +1,23 @@
 # kori
 
-Kori is a Cloudflare-cached read-only proxy for a Walrus aggregator. Walrus blobs are content-addressed, so most aggregator responses are
-effectively immutable. kori sits at the edge in front of a single configured
-backend so repeated reads of the same blob or quilt patch land on Cloudflare's
-POPs instead of the upstream aggregator.
+Kori is a Cloudflare-cached read-only proxy for a Walrus aggregator. Walrus
+blobs are content-addressed, so most aggregator responses are effectively
+immutable. Kori uses
+[Workers Cache](https://developers.cloudflare.com/workers/cache/) in front of
+the Worker so repeated reads of the same blob or quilt patch do not execute
+Kori or reach the upstream aggregator.
 
 ## Design
 
+- Enable Cloudflare's tiered Workers Cache. Requests check a POP-local lower
+  tier and then an upper tier that aggregates fills across Cloudflare's
+  network. Only a miss in both tiers executes Kori.
 - Cache content-addressed routes (blobs, quilt patches, quilt patch listings)
   with `max-age=1y, stale-while-revalidate=30d, immutable`. The bytes are
   cryptographically tied to the URL hash — they're valid forever. The
   aggregator's defaults are conservative because it serves unknown clients;
-  kori knows it's caching content-addressed data and bets on it.
-- Blob expirations still propagate via SWR: after max-age, next request
-  serves stale + fires background refresh. If upstream returns 404, the
-  entry evicts for the next request.
+  Kori knows it's caching content-addressed data and bets on it.
+- Let Workers Cache perform stale-while-revalidate and request collapsing.
 - Block write endpoints — read-only proxy.
 - Pass through health, streaming, and object-attribute routes either
   uncached or with a short TTL.
@@ -35,11 +38,13 @@ POPs instead of the upstream aggregator.
 | `GET /status` | passthrough | Health |
 | `PUT /v1/blobs`, `PUT /v1/quilts` | **403** | Use a publisher directly |
 
-`Range` requests skip the edge cache (they'd balloon entries one-per-range).
-Bare `Range` GETs pass through to the backend.
+Workers Cache satisfies `Range` requests from the cached full response. A cold
+range request fills the cache with the full `200` response, then Cloudflare
+returns the requested `206` slice; different ranges share that cache entry.
 
-Responses include `x-kori-cache: HIT | MISS | STALE | PASS` so callers can
-see what happened.
+Cloudflare adds `Cf-Cache-Status` (`HIT`, `MISS`, `UPDATING`, `BYPASS`, and so
+on) to responses so callers can see what happened. Kori exposes that header to
+browser clients through CORS.
 
 ## Configuration
 
@@ -47,10 +52,22 @@ see what happened.
 `wrangler.jsonc` points at a public mainnet aggregator. Override per-deploy
 in your own wrangler config, or via `.dev.vars` for local development.
 
+Workers Cache requires Wrangler 4.69.0 or newer and this configuration:
+
+```jsonc
+"cache": {
+  "enabled": true
+}
+```
+
+External Wrangler configs passed with `--config` replace the in-tree config,
+so they must enable `cache` as well.
+
 ## Develop & deploy
 
 ```sh
 bun install
+bun test
 bun run dev                                          # local on :8787
 bun run deploy                                       # deploy with in-tree config
 bun run deploy -- --config /path/to/overlay/dir      # deploy with external overlay
@@ -64,7 +81,7 @@ sources a `.env` from the overlay dir or its parent into the wrangler env, so
 
 ## Future work
 
-- R2 L2 cache for global persistence + Walrus availability backstop.
+- R2 persistence for a durable Walrus availability backstop.
 - Admin purge endpoint for takedowns.
 - Analytics datapoints (cache status, backend, response size).
 

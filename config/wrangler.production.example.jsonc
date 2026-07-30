@@ -1,15 +1,21 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
+  "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "kori",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-29",
-  // Keep workers.dev available for repository-local development. Production
-  // overlays must attach a custom domain and set workers_dev to false.
+
+  // Replace this hostname before using the template.
+  "routes": [
+    {
+      "pattern": "kori.example.com",
+      "custom_domain": true
+    }
+  ],
+  "workers_dev": false,
   "preview_urls": false,
+
   "cache": {
     "enabled": true,
-    // Blob bytes do not depend on the deployed code version. Cache-affecting
-    // releases must use the documented purge procedure.
     "cross_version_cache": true
   },
   "placement": {
@@ -18,7 +24,7 @@
   "ratelimits": [
     {
       "name": "UPSTREAM_RATE_LIMITER",
-      // Must remain unique within the Cloudflare account.
+      // Choose a positive integer that is unique within the target account.
       "namespace_id": "5674001",
       "simple": {
         "limit": 300,
@@ -29,9 +35,8 @@
   "version_metadata": {
     "binding": "CF_VERSION_METADATA"
   },
+
   "vars": {
-    // Override per-deployment via an external wrangler.jsonc passed to
-    // `bun run deploy -- --config <dir>`, or via .dev.vars locally.
     "WALRUS_AGGREGATOR_URL": "https://aggregator.walrus.atalma.io"
   },
   "observability": {
